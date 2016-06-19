@@ -4,12 +4,26 @@ import os
 import pandas as pd
 from keras.utils import np_utils
 
+
+
+def _maybe_float32(fun):
+    """
+    Don't overthink this
+    """
+    def wrapper(*args):
+        if args[0].as_float32:
+            return fun(*args).astype(np.float32)
+        else: 
+            return fun(*args)
+    return wrapper
+    
 class Dataset(object):
     
     def _run_if_not_exist(self, obj_name, meth):
         if getattr(self, obj_name) is None:
             meth()
         return getattr(self, obj_name)
+    
     
     @staticmethod
     def _create_image_opened(images_folder):   
@@ -23,7 +37,8 @@ class Dataset(object):
             return image
         return open_image_id
     
-    def __init__(self, images_folder, ids_path, train_percent=0.7):
+    def __init__(self, images_folder, ids_path, train_percent=0.7, as_float32=False):
+        self.as_float32 = as_float32
         self.images_folder = images_folder
         self.ids_path = ids_path
         self.ids = pd.read_csv(ids_path)
@@ -34,7 +49,13 @@ class Dataset(object):
         self._X_data = None
         self._Y_data = None
         self._X_submition = None
+        self.train_ind = None
+        self.test_ind = None
         self.open_image_id = self._create_image_opened(self.images_folder)
+    
+    def set_as_float32(self):
+        self.as_float32 = True
+        self._X_data = self._X_data.astype(np.float32)
     
     @property
     def d_size(self):
@@ -50,6 +71,8 @@ class Dataset(object):
         self._X_data = np.array(X_data)
         self._Y_data = np.array(Y_data)
         self._Y_data = np_utils.to_categorical(self._Y_data-1, self.nb_classes)
+        if self.as_float32:
+            self._X_data = self._X_data.astype(np.float32)
         print "Done."
         
     def split_dataset(self,seed=1337):
@@ -57,9 +80,9 @@ class Dataset(object):
         rnd = np.random.rand(self.d_size)
         self.train_ind = rnd<self.train_percent
         self.test_ind = ~self.train_ind
-        X, Y = self.X_data, self.Y_data
-        self._X_train, self._Y_train = map(lambda o: o[self.train_ind], (X,Y))
-        self._X_test, self._Y_test = map(lambda o: o[self.test_ind], (X,Y))
+        #X, Y = self.X_data, self.Y_data
+        #self._X_train, self._Y_train = map(lambda o: o[self.train_ind], (X,Y))
+        #self._X_test, self._Y_test = map(lambda o: o[self.test_ind], (X,Y))
 
     @staticmethod
     def apply_each_row(func, data):
@@ -69,19 +92,22 @@ class Dataset(object):
         return rval
        
     def apply_each_X_data_row(self, func):
-        xtmp = self.apply_each_row(func, self._X_data)
+        xtmp = self.apply_each_row(func, self.X_data)
         del self._X_data
         self._X_data = np.array(xtmp)
         self.split_dataset()
        
     def apply_each_X_submition_row(self, func):
-        xtmp = self.apply_each_row(func, self._X_submition)
+        xtmp = self.apply_each_row(func, self.X_submition)
         del self._X_submition
+        self._X_submition = None
         self._X_submition = np.array(xtmp)
+
     
     
     
     @property
+    @_maybe_float32
     def X_data(self):
         return self._run_if_not_exist('_X_data',self.read_dataset)
         
@@ -91,19 +117,27 @@ class Dataset(object):
         
     @property
     def Y_train(self):
-        return self._run_if_not_exist('_Y_train',self.split_dataset)
+        train_ind = self._run_if_not_exist('train_ind',self.split_dataset)
+        return self.Y_data[train_ind]
         
+    
     @property
+    @_maybe_float32
     def X_train(self):
-        return self._run_if_not_exist('_X_train',self.split_dataset)
+        train_ind = self._run_if_not_exist('train_ind',self.split_dataset)
+        return self.X_data[train_ind]
         
+    
     @property
+    @_maybe_float32
     def X_test(self):
-        return self._run_if_not_exist('_X_test',self.split_dataset)
+        test_ind = self._run_if_not_exist('test_ind',self.split_dataset)
+        return self.X_data[test_ind]
     
     @property
     def Y_test(self):
-        return self._run_if_not_exist('_Y_test',self.split_dataset)
+        test_ind = self._run_if_not_exist('test_ind',self.split_dataset)
+        return self.Y_data[test_ind]
     
     def read_submition(self, submition_ids_path, submition_pics_folder):
         self.submition_pics_folder = submition_pics_folder
@@ -115,6 +149,9 @@ class Dataset(object):
             X_submition.append(self.open_submition_id(Id,extension='.jpg'))
         self._X_submition = np.array(X_submition)
 
+    
+    @property
+    @_maybe_float32
     def X_submition(self):
         if self._X_submition is None:
             raise AttributeError('Use \'read_submition()\' first to read submition data.')
